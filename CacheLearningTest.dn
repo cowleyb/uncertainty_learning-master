@@ -1,0 +1,273 @@
+//const int REPEATS = 70
+const int REPEATS = 100
+
+const int LEARNING_WINDOW = 1000
+
+const int WORKLOAD_TIMING_INTERVAL = 1000
+
+const dec NORMALISATION_HIGH = 1.0
+//const dec NORMALISATION_HIGH = 0.4
+//const dec NORMALISATION_HIGH = 0.1
+const dec NORMALISATION_LOW = 0.0
+
+uses Driver
+uses Monitor
+
+data TestSpec {
+	int fileCount
+	int fileSize
+	int sizeVariance
+	}
+
+component provides App requires io.Output out, Loader loader, composition.RecursiveLoader rLoader, composition.Search csearch, data.IntUtil iu, data.DecUtil du, data.StringUtil stringUtil, io.File, ml.rl.RL, composition.Adapter adaptor, composition.Intercepter interceptor, time.Timer timer, util.Random random, util.ParamParser {
+	
+	IDC variants[]
+	
+	int STORED_ITEM_COUNT = 1000
+	
+	int WORKLOAD_CHUNK = 1000
+	int CHUNK_COUNT = 500
+	int LEARNING_ITERATIONS = 1000
+	
+	TestSpec workloads[]
+	
+	int wkProgress = 0
+	
+	IDC loadMonitor()
+		{
+		return loader.load("FileLoaderMonitor.o")
+		}
+	
+	dec normalise(dec reward)
+		{
+		if (reward > NORMALISATION_HIGH) reward = NORMALISATION_HIGH
+		if (reward < NORMALISATION_LOW) reward = NORMALISATION_LOW
+		
+		reward = reward / NORMALISATION_HIGH
+		
+		return 1.0 - reward
+		}
+	
+	void timeWorkload(File fd)
+		{
+		int totalTime = 0
+		while (wkProgress < CHUNK_COUNT)
+			{
+			fd.write("$totalTime, $CHUNK_COUNT, $wkProgress\r\n")
+			timer.sleep(WORKLOAD_TIMING_INTERVAL)
+			totalTime += WORKLOAD_TIMING_INTERVAL
+			}
+		
+		fd.write("$totalTime, $CHUNK_COUNT, $wkProgress\r\n")
+		}
+	
+	void runWorkload(Driver main)
+		{
+		int randomSeed = 0
+		
+		for (wkProgress = 0; wkProgress < CHUNK_COUNT; wkProgress++)
+			{
+			int wkIndex = wkProgress % workloads.arrayLength
+			main.prep(randomSeed, workloads[wkIndex].fileCount, workloads[wkIndex].fileSize, workloads[wkIndex].sizeVariance, WORKLOAD_CHUNK)
+			main.start()
+			}
+		
+		out.println("[workload complete]")
+		}
+	
+	bool intIn(int q, int in[])
+		{
+		for (int i = 0; i < in.arrayLength; i++)
+			{
+			if (in[i] == q) return true
+			}
+		
+		return false
+		}
+	
+	void loadDepends(IDC forCom, int except[])
+		{
+		InterfaceSpec depends[] = forCom.getRequires()
+		
+		for (int i = 0; i < depends.arrayLength; i++)
+			{
+			if (!intIn(i, except))
+				{
+				char fullPackage[] = depends[i].package
+				if (depends[i].variant != null) fullPackage = new char[](fullPackage, ":", depends[i].variant)
+				
+				String options[] = csearch.getComponents(fullPackage)
+				
+				if (options.arrayLength > 0)
+					{
+					String dependency = options[0]
+					
+					IDC newCom = rLoader.load(dependency.string).mainComponent
+					
+					forCom.wire(depends[i].alias, newCom, depends[i].alias)
+					}
+				}
+			}
+		}
+	
+	void test(File fd, File fdw)
+		{
+		IDC driverCom = loader.load("FileLoaderDriver.o")
+		
+		loadDepends(driverCom, 0)
+		
+		IDC monitorCom = loadMonitor()
+		
+		loadDepends(monitorCom, 0)
+		
+		Monitor monitor = new Monitor() from monitorCom
+		
+		InterfaceSpec depends[] = driverCom.getRequires()
+		
+		// - get the set of implementation variants for req. #0, and set them as our action list for learning
+		// - start a separate thread running a workload
+		// - begin a learning process for N iterations
+		// - (then somehow work in the classifier element...)
+		
+		char fullPackage[] = depends[0].package
+		if (depends[0].variant != null) fullPackage = new char[](fullPackage, ":", depends[0].variant)
+		
+		String options[] = csearch.getComponents(fullPackage)
+		String actions[] = new String[options.arrayLength]
+		
+		variants = new IDC[options.arrayLength]
+		
+		out.println("Action list:")
+		
+		for (int i = 0; i < options.arrayLength; i++)
+			{
+			variants[i] = rLoader.load(options[i].string).mainComponent
+			actions[i] = options[i]
+			out.println(" - $(options[i].string)")
+			}
+		
+		// - wire to the first one
+		driverCom.wire(depends[0].alias, variants[0], depends[0].alias)
+		monitorCom.wire(depends[0].alias, variants[0], depends[0].alias)
+		
+		// - prep the driver program
+		Driver driverMain = new Driver(0, 0, 0) from driverCom
+		
+		// - inject a monitoring probe
+		
+		interceptor.insertInterceptor(driverCom, depends[0].alias, monitorCom, depends[0].alias, depends[0].alias)
+		
+		// - start a separate thread running a workload
+		asynch::runWorkload(driverMain)
+		
+		//start a workload timer thread
+		asynch::timeWorkload(fdw)
+		
+		// - begin a learning process for N iterations
+		
+		RL learningInstances[] = new RL[1]
+		
+		learningInstances[0] = new RL()
+		learningInstances[0].setActions(actions)
+		
+		int curAction = 0
+		int learningTime = 0
+		
+		int curEnv = 0
+		
+		while (true)
+			{
+			if (wkProgress == CHUNK_COUNT)
+				{
+				out.println("learning iterations stopped as workload ended")
+				break
+				}
+			
+			int q = learningInstances[curEnv].getAction()
+			
+			if (q != curAction)
+				{
+				adaptor.adaptRequiredInterface(monitorCom, depends[0].alias, variants[q])
+				}
+			
+			curAction = q
+			
+			timer.sleep(LEARNING_WINDOW)
+			
+			learningTime += LEARNING_WINDOW
+			
+			curEnv = monitor.getEnvironment()
+			
+			dec reward_raw = monitor.getReward()
+			dec reward = normalise(reward_raw)
+			
+			if (curEnv >= learningInstances.arrayLength)
+				{
+				RL nrl = new RL()
+				nrl.setActions(actions)
+				learningInstances = new RL[](learningInstances, nrl)
+				}
+			
+			learningInstances[curEnv].consumeData(reward)
+			
+			fd.write("$learningTime, $q, $reward_raw, $reward, $curEnv\r\n")
+			fd.flush()
+			}
+		}
+	
+	//the workfile file lists a set of discrete workload types which will be executed in order (and in a loop)
+	// - the param -c XXX provides how many operations to run for each workload type
+	// - the param -t XXX provides the number of workload chunks to execute
+	// - so if -c 50 and -t 100 we will execute 100 workload chunks, each of which has 50 operations
+	int App:main(AppParam params[])
+		{
+		ParamParser pparse = new ParamParser(params)
+		
+		if (pparse.getFreeValues() == null)
+			{
+			out.println("use CacheLearningTest workload_file")
+			return 1
+			}
+		
+		char workload[] = pparse.getFreeValues()[0].string
+		File ifd = new File(workload, File.READ)
+		String parts[] = ifd.read(ifd.getSize()).explode("\r\n")
+		
+		workloads = new TestSpec[parts.arrayLength]
+		
+		for (int i = 0; i < parts.arrayLength; i++)
+			{
+			String kparts[] = parts[i].string.explode(" ")
+			workloads[i] = new TestSpec(iu.intFromString(kparts[0].string), iu.intFromString(kparts[1].string), iu.intFromString(kparts[2].string))
+			}
+		
+		if (pparse.getValue("-c") != null)
+			WORKLOAD_CHUNK = iu.intFromString(pparse.getValue("-c"))
+		
+		if (pparse.getValue("-t") != null)
+			CHUNK_COUNT = iu.intFromString(pparse.getValue("-t"))
+		
+		if (pparse.getValue("-i") != null)
+			LEARNING_ITERATIONS = iu.intFromString(pparse.getValue("-i"))
+		
+		if (pparse.getValue("-s") != null)
+			STORED_ITEM_COUNT = iu.intFromString(pparse.getValue("-s"))
+		
+		char workloadName[] = workload.explode("/\\.")[1].string
+		
+		File fd = new File("output_data/cache_learning_stats_$(workloadName)_$(CHUNK_COUNT)_$(WORKLOAD_CHUNK)_$(STORED_ITEM_COUNT).txt", File.CREATE)
+		
+		fd.write("time_ms, action, reward_raw_ms, reward_calc, env\r\n")
+		
+		File fdw = new File("output_data/cache_learning_completion_$(workloadName)_$(CHUNK_COUNT)_$(WORKLOAD_CHUNK)_$(STORED_ITEM_COUNT).txt", File.CREATE)
+		
+		fdw.write("time_ms, wk_total, wk_progress\r\n")
+		
+		test(fd, fdw)
+		
+		fd.close()
+		
+		return 0
+		}
+	
+	}

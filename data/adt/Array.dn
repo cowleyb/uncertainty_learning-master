@@ -1,0 +1,184 @@
+component provides List(Destructor, AdaptEvents) {
+	
+	Data items[]
+	
+	int iterator
+	
+	int length
+	
+	Mutex listLock = new Mutex()
+	
+	void List:add(Data item)
+		{
+		mutex(listLock)
+			{
+			items = new Data[](items, item)
+			length ++
+			}
+		}
+	
+	void List:remove(Data item)
+		{
+		mutex(listLock)
+			{
+			int ndx = INT_MAX
+			
+			for (int i = 0; i < items.arrayLength; i++)
+				{
+				if (items[i] === item)
+					ndx = i
+				}
+			
+			if (ndx != INT_MAX)
+				{
+				store Data newItems[] = new Data[length-1]
+				
+				int j = 0
+				for (int i = 0; i < items.arrayLength; i++)
+					{
+					if (items[i] === item)
+						{
+						}
+						else
+						{
+						newItems[j] = items[i]
+						j ++
+						}
+					}
+				
+				items = newItems
+				
+				length --
+				}
+			}
+		}
+	
+	void List:update(Data item, Data newVersion)
+		{
+		mutex(listLock)
+			{
+			}
+		}
+	
+	//iterator functions
+	// - we keep iteratorNext on the item *after* the one we're going to return
+	// - this is done so that the programmer can remove() the just-returned item
+	Data List:getFirst()
+		{
+		mutex(listLock)
+			{
+			iterator = 0
+			
+			if (iterator < length)
+				{
+				iterator ++
+				return items[iterator-1]
+				}
+			
+			return null
+			}
+		}
+	
+	Data List:getNext()
+		{
+		mutex(listLock)
+			{
+			if (iterator < length)
+				{
+				iterator ++
+				return items[iterator-1]
+				}
+			
+			return null
+			}
+		}
+	
+	bool List:isEnd()
+		{
+		return iterator == length
+		}
+	
+	Data List:getIndex(int ndx)
+		{
+		mutex(listLock)
+			{
+			return items[ndx]
+			}
+		}
+	
+	void List:setIndex(int ndx, Data d)
+		{
+		mutex(listLock)
+			{
+			items[ndx] = d
+			}
+		}
+	
+	int List:getLength()
+		{
+		mutex(listLock)
+			{
+			return length
+			}
+		}
+	
+	Data[] List:getContents(opt Type t)
+		{
+		mutex(listLock)
+			{
+			return items
+			}
+		}
+	
+	void buildFromArray(Data newItems[])
+		{
+		clearList()
+		
+		items = clone newItems
+		length = items.arrayLength
+		}
+	
+	bool List:clone(Object o)
+		{
+		List src = o
+		
+		Data xitems[] = src.getContents()
+		
+		buildFromArray(xitems)
+		
+		return true
+		}
+	
+	void clearList()
+		{
+		items = null
+		
+		length = 0
+		}
+	
+	void Destructor:destroy()
+		{
+		clearList()
+		}
+	
+	void AdaptEvents:inactive()
+		{
+		//flatten list contents to transfer state
+		content = getContents()
+		}
+	
+	void AdaptEvents:active()
+		{
+		//unpack list contents from transfer state
+		buildFromArray(content)
+		
+		//recall our iterator position
+		int q = iteratorIndex
+		getFirst()
+		for (int i = 0; i < q; i++)
+			{
+			getNext()
+			}
+		}
+	
+	}

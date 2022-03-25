@@ -1,0 +1,165 @@
+uses time.DateTime
+
+data CachedFile {
+	char path[]
+	byte content[]
+	DateTime modified
+	
+	EvictItem evi
+	
+	CachedFile next
+	CachedFile prev
+	}
+
+data EvictItem {
+	CachedFile cf
+	int bucket
+	
+	EvictItem next
+	EvictItem prev
+	}
+
+data HashBucket {
+	CachedFile list
+	}
+
+const int BUCKET_COUNT = 100
+const int STORE_CAP = 10000000 //10MB
+
+component provides FileLoader(AdaptEvents) requires io.File, io.FileSystem fileSystem {
+	
+	HashBucket buckets[]
+	
+	//eviction list, for least-recently-used (last item on list is least recent)
+	EvictItem evictList
+	EvictItem evictListEnd
+	
+	int totalStoreSize
+	
+	int hash(char str[])
+		{
+		return 0
+		}
+	
+	byte[] inCache(char path[])
+		{
+		//check if this item is in the cache, and if so adjust the eviction list based on our policy (least-recently-used)
+		int ndx = hash(path)
+		
+		for (CachedFile cf = buckets[ndx].list; cf != null; cf = cf.next)
+			{
+			if (cf.path == path)
+				{
+				//adjust eviction list, moving this item to the start of the list as the most recently used thing
+				EvictItem evict = cf.evi
+				
+				if (evict !== evictList)
+					{
+					if (evict.prev != null)
+						evict.prev.next = evict.next
+					
+					if (evict.next != null)
+						evict.next.prev = evict.prev
+					
+					if (evict === evictListEnd)
+						evictListEnd = evict.prev
+					
+					evict.prev = null
+					evict.next = evictList
+					
+					evictList = evict
+					}
+				
+				//TODO: check modified date on disk; if we're out of date then remove from cache and return null...
+				
+				return cf.content
+				}
+			}
+		
+		return null
+		}
+	
+	void cacheFile(char path[], byte content[], DateTime modified)
+		{
+		if (content.arrayLength < STORE_CAP)
+			{
+			//evict items until we have space available
+			
+			int remainingSpace = STORE_CAP - totalStoreSize
+			
+			while (content.arrayLength > remainingSpace)
+				{
+				//evict item, according to eviction policy (least-recently-used)
+				EvictItem evict = evictListEnd
+				
+				if (evict.prev != null)
+					evict.prev.next = null
+				
+				evictListEnd = evict.prev
+				
+				if (evictListEnd == null)
+					evictList = null
+				
+				totalStoreSize -= evict.cf.content.arrayLength
+				remainingSpace += evict.cf.content.arrayLength
+				}
+			
+			//store the item
+			CachedFile ncf = new CachedFile(path, content, modified)
+			
+			int ndx = hash(path)
+			
+			if (buckets[ndx].list != null)
+				buckets[ndx].list.prev = ncf
+			
+			ncf.next = buckets[ndx].list
+			
+			buckets[ndx].list = ncf
+			
+			//add it to the eviction list
+			EvictItem nei = new EvictItem(ncf, ndx)
+			
+			if (evictList != null)
+				evictList.prev = nei
+				else
+				evictListEnd = nei
+			
+			nei.next = evictList
+			evictList = nei
+			
+			//link to eviction item
+			ncf.evi = nei
+			}
+		}
+	
+	FileLoader:FileLoader()
+		{
+		buckets = new HashBucket[BUCKET_COUNT]
+		for (int i = 0; i < buckets.arrayLength; i++) buckets[i] = new HashBucket()
+		}
+	
+	byte[] FileLoader:loadFile(char path[])
+		{
+		byte result[]
+		if ((result = inCache(path)) != null)
+			{
+			return result
+			}
+		
+		File fd = new File(path, File.READ)
+		result = fd.read(fd.getSize())
+		fd.close()
+		
+		DateTime modified = fileSystem.getInfo(path).modified
+		
+		cacheFile(path, result, modified)
+		
+		return result
+		}
+	
+	void AdaptEvents:active()
+		{
+		FileLoader()
+		}
+	
+	}

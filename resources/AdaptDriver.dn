@@ -1,0 +1,6 @@
+interface AdaptDriver {
+	void start(int threadCount, int storedItemCount)
+	void stop()
+	
+	bool doesScale(){return false}
+	}

@@ -1,0 +1,123 @@
+//const int REPEATS = 70
+const int REPEATS = 20
+
+const int OPERATION_COUNT = 1000
+
+uses Driver
+
+component provides App requires io.Output out, Loader loader, composition.RecursiveLoader rLoader, composition.Search csearch, time.Calendar cal, time.DateUtil dateUtil, data.IntUtil iu, data.DecUtil du, data.StringUtil stringUtil, io.File, util.ParamParser {
+	
+	int STORED_ITEM_COUNT = 1000
+	
+	int ratios[] = new int[](10, 20, 30, 40, 50, 60, 70, 80, 90)
+	
+	bool intIn(int q, int in[])
+		{
+		for (int i = 0; i < in.arrayLength; i++)
+			{
+			if (in[i] == q) return true
+			}
+		
+		return false
+		}
+	
+	void loadDepends(IDC forCom, int except[])
+		{
+		InterfaceSpec depends[] = forCom.getRequires()
+		
+		for (int i = 0; i < depends.arrayLength; i++)
+			{
+			if (!intIn(i, except))
+				{
+				char fullPackage[] = depends[i].package
+				if (depends[i].variant != null) fullPackage = new char[](fullPackage, ":", depends[i].variant)
+				
+				String options[] = csearch.getComponents(fullPackage)
+				
+				if (options.arrayLength > 0)
+					{
+					String dependency = options[0]
+					
+					IDC newCom = rLoader.load(dependency.string).mainComponent
+					
+					forCom.wire(depends[i].alias, newCom, depends[i].alias)
+					}
+				}
+			}
+		}
+	
+	void test(File fd, int pIndex)
+		{
+		IDC driverCom = loader.load("ListDriver.o")
+		
+		//the first dependency is the one we'll be adapting; any others we just load once
+		InterfaceSpec depends[] = driverCom.getRequires()
+		
+		char fullPackage[] = depends[0].package
+		if (depends[0].variant != null) fullPackage = new char[](fullPackage, ":", depends[0].variant)
+		
+		String options[] = csearch.getComponents(fullPackage)
+		
+		String dependency = options[pIndex]
+		
+		String parts[] = stringUtil.explode(dependency.string, "./")
+		char name[] = parts[parts.arrayLength-2].string
+		
+		IDC dependCom = rLoader.load(dependency.string).mainComponent
+		
+		driverCom.wire(depends[0].alias, dependCom, depends[0].alias)
+		
+		loadDepends(driverCom, 0)
+		
+		Driver main = new Driver(STORED_ITEM_COUNT, 0, 0) from driverCom
+		
+		for (int i = 0; i < ratios.arrayLength; i++)
+			{
+			int opTimes[] = new int[REPEATS]
+			
+			for (int j = 0; j < REPEATS; j++)
+				{
+				int randomSeed = cal.getTime().millisecond
+				
+				main.prep(randomSeed, ratios[i], 100 - ratios[i], OPERATION_COUNT, 0)
+				
+				DateTime opStart = cal.getTime()
+				
+				main.start()
+				
+				DateTime opEnd = cal.getTime()
+				
+				opTimes[j] = opEnd.diff(opStart).toMilliseconds()
+				}
+			
+			char times[] = null
+			for (int j = 0; j < opTimes.arrayLength; j++)
+				{
+				times = new char[](times, "$(opTimes[j])-")
+				}
+			
+			fd.write("$(dependency.string), $(ratios[i])/$(100 - ratios[i]), $times\r\n")
+			}
+		}
+	
+	int App:main(AppParam params[])
+		{
+		ParamParser pparse = new ParamParser(params)
+		
+		if (pparse.getValue("-s") != null)
+			STORED_ITEM_COUNT = iu.intFromString(pparse.getValue("-s"))
+		
+		File fd = new File("output_data/list_diverge_stats_s$(STORED_ITEM_COUNT).txt", File.CREATE)
+		
+		fd.write("com, ratio, avg_time_ms\r\n")
+		
+		test(fd, 0)
+		
+		test(fd, 1)
+		
+		fd.close()
+		
+		return 0
+		}
+	
+	}

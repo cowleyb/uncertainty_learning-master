@@ -1,0 +1,235 @@
+
+
+component provides data.adt.List(InterceptEvents), Monitor requires data.adt.List, time.Calendar cal,io.FileSystem fileSystem, io.Output out, io.File {
+	
+	static int accessCount
+	static int modifyCount
+	
+	static int costTotal
+	static int costCount
+
+	implementation Monitor {
+		
+		int Monitor:getEnvironment()
+			{
+			int class = 0
+			
+			dec ac = accessCount
+			dec mc = modifyCount
+			
+			dec qc = (ac / (ac + mc)) * 100.0
+			
+			if (qc > 70.0)
+				class = 0
+				else
+				class = 1
+			
+			accessCount = 0
+			modifyCount = 0
+			out.println("next")
+			return class
+			}
+		
+		dec Monitor:getReward()
+			{
+			dec total = costTotal
+			dec res = total / costCount
+			
+			costTotal = 0
+			costCount = 0
+			
+			return res
+			}
+		
+		}
+	
+	implementation List {
+		
+		List proxy
+		
+		void InterceptEvents:setTarget(Object o)
+			{
+			proxy = o
+			out.println("hello")
+			}
+		
+		void List:add(Data item)
+			{
+			modifyCount ++
+			
+			int start = cal.getMS()
+			
+			proxy.add(item)
+			
+			int end = cal.getMS()
+			
+			int diff = end - start
+			costTotal += diff
+			costCount ++
+
+			//out.println("$item")
+			out.println("add()")
+			}
+		
+		void List:remove(Data item)
+			{
+			modifyCount ++
+			
+			int start = cal.getMS()
+			
+			proxy.remove(item)
+			
+			int end = cal.getMS()
+			
+			int diff = end - start
+			costTotal += diff
+			costCount ++
+
+			out.println("remove()")
+			}
+		
+		void List:update(Data item, Data newVersion)
+			{
+			accessCount ++
+			
+			int start = cal.getMS()
+			
+			proxy.update(item, newVersion)
+			
+			int end = cal.getMS()
+			
+			int diff = end - start
+			costTotal += diff
+			costCount ++
+
+		
+
+			out.println("update()")
+			}
+		
+		Data List:getFirst()
+			{
+			accessCount ++
+			
+			int start = cal.getMS()
+			
+			Data res = proxy.getFirst()
+			
+			int end = cal.getMS()
+			
+			int diff = end - start
+			costTotal += diff
+			costCount ++
+			
+		//	File a = new File("output_data/stuff.txt", File.CREATE)
+			//a.write("getFirst()")
+			out.println("getFirst()")
+
+			return res
+			}
+		
+		Data List:getNext()
+			{
+			accessCount ++
+			
+			int start = cal.getMS()
+			
+			Data res = proxy.getNext()
+			
+			int end = cal.getMS()
+			
+			int diff = end - start
+			costTotal += diff
+			costCount ++
+
+			//File a = new File("output_data/stuff.txt", File.CREATE)
+			//a.write("getNext()")
+			
+			out.println("getNext()")
+			
+			return res
+			}
+		
+		bool List:isEnd()
+			{
+			accessCount ++
+			
+			int start = cal.getMS()
+			
+			bool res = proxy.isEnd()
+			
+			int end = cal.getMS()
+			
+			int diff = end - start
+			costTotal += diff
+			costCount ++
+				
+			//File a = new File("output_data/stuff.txt", File.CREATE)
+			//a.write("isEnd()")
+
+			out.println("isEnd()")
+			
+			return res
+			}
+		
+		Data List:getIndex(int ndx)
+			{
+			accessCount ++
+			
+			int start = cal.getMS()
+			
+			Data res = proxy.getIndex(ndx)
+			
+			int end = cal.getMS()
+			
+			int diff = end - start
+			costTotal += diff
+			costCount ++
+			
+			//File a = new File("output_data/stuff.txt", File.CREATE)
+			//a.write("getIndex()")
+			
+			out.println("getIndex()")
+			return res
+			}
+		
+		void List:setIndex(int ndx, Data d)
+			{
+			accessCount ++
+			
+			int start = cal.getMS()
+			
+			proxy.setIndex(ndx, d)
+			
+			int end = cal.getMS()
+			
+			int diff = end - start
+			costTotal += diff
+			costCount ++
+			
+			//File a = new File("output_data/stuff.txt", File.CREATE)
+			out.println("setIndex()")
+			
+			}
+		
+		int List:getLength()
+			{
+			accessCount ++
+			
+			out.println("getLength()")
+			return proxy.getLength()
+			}
+		
+		Data[] List:getContents(opt Type type)
+			{
+			return proxy.getContents(type)
+			}
+		
+		bool List:clone(Object o)
+			{
+			return true
+			}
+		
+		}
+	
+	}

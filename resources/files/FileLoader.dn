@@ -1,0 +1,7 @@
+interface FileLoader {
+	
+	FileLoader()
+	
+	byte[] loadFile(char filename[])
+	
+	}

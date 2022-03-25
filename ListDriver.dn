@@ -1,0 +1,228 @@
+uses data.String
+
+data WorkItem {
+	const byte ADD = 0
+	const byte REM = 1
+	const byte GET = 2
+	byte type
+	int index
+	char field[]
+	}
+
+component provides Driver requires data.adt.List, util.Math math, util.Random random, io.Output out, data.IntUtil iu, io.File {
+	
+	List list
+
+	
+	WorkItem workload[]
+	
+	Driver:Driver(int initialStore, int pb, int pc)
+		{
+		list = new List()
+	
+		//prime the list with the number of items in initialStore
+		for (int i = 0; i < initialStore; i++)
+			{
+			char str[] = randomStr(5)
+			list.add(new String(str))
+			}
+		}
+	
+	char[] randomStr(int len)
+		{
+		char res[] = new char[len]
+		
+		for (int i = 0; i < len; i++)
+			{
+			res[i] = 61 + random.getInt(27)
+			}
+		
+		return res
+		}
+	
+	void Driver:prep(int seed, int accessPercent, int modifyPercent, int operationCount, int pd)
+		{
+		workload = new WorkItem[operationCount]
+		
+		//interleave operations in the above percentages on our list
+		//what we really need to know is, for every 1 accessPercent, how many modifyPercent's do we need to do?
+		//  - or the reverse, depending on which is bigger...
+		//  - we also need to get the result as a dec, and take off the fractional part
+		//  - every time we do our 1, we need to add an accumulator the value of the fractional part, then when this goes >= 1.0, do another one...
+		
+		random.setSeed(seed)
+		
+		if (accessPercent > modifyPercent)
+			{
+			dec apVal = accessPercent
+			dec mpVal = modifyPercent
+			
+			dec frac = apVal / mpVal
+			dec fpart = frac - math.floor(frac)
+			dec acc = fpart
+			
+			int ifr = frac
+			
+			bool modifyAdd = true
+			
+			//out.println("mod 1:$(ifr)")
+			
+			int actualAccess = 0
+			int actualModify = 0
+			
+			for (int i = 0; i < operationCount; i++)
+				{
+				//do a modify
+				// (also, cycle monotonically between add/rem, always starting with add)
+				// (the main question here is how to know what we can "rem"...but then, does it matter? can it always be the end?)
+				if (modifyAdd)
+					{
+					workload[i] = new WorkItem(WorkItem.ADD, 0, randomStr(5))
+					}
+					else
+					{
+					workload[i] = new WorkItem(WorkItem.REM, 0, null)
+					//list.remove(random.getInt(list.getLength()))
+					}
+				
+				actualModify ++
+				
+				//do n accesses at random indices, as indicated by frac
+				for (int j = 0; j < ifr; j++)
+					{
+					i ++
+					
+					if (i >= operationCount)
+						return
+					
+					workload[i] = new WorkItem(WorkItem.GET, random.getInt(list.getLength()), null)
+					
+					actualAccess ++
+					}
+				
+				acc += fpart
+				
+				if (acc >= 1.0)
+					{
+					acc = acc - math.floor(acc)
+					
+					i ++
+					
+					if (i >= operationCount)
+						return
+					
+					//do another access
+					//list.getIndex(list.getLength() / 2)
+					
+					workload[i] = new WorkItem(WorkItem.GET, random.getInt(list.getLength()), null)
+					
+					actualAccess ++
+					}
+				
+				modifyAdd = !modifyAdd
+				}
+			
+			//out.println("ACCESS: $(actualAccess), MODIFY: $(actualModify) || ratio $accessPercent:$modifyPercent")
+			}
+			else
+			{
+			dec apVal = accessPercent
+			dec mpVal = modifyPercent
+			
+			dec frac = mpVal / apVal
+			dec fpart = frac - math.floor(frac)
+			dec acc = fpart
+			
+			bool modifyAdd = true
+			
+			int actualAccess = 0
+			int actualModify = 0
+			
+			for (int i = 0; i < operationCount; i++)
+				{
+				//do an access
+				//list.getIndex(list.getLength() / 2)
+				workload[i] = new WorkItem(WorkItem.GET, random.getInt(list.getLength()), null)
+				
+				actualAccess ++
+				
+				//do n modifies
+				// (also, cycle monotonically between add/rem, always starting with add)
+				// (the main question here is how to know what we can "rem"...but then, does it matter? can it always be the end?)
+				
+				int ifr = frac
+				for (int j = 0; j < ifr; j++)
+					{
+					i ++
+					
+					if (i >= operationCount)
+						return
+					
+					if (modifyAdd)
+						{
+						workload[i] = new WorkItem(WorkItem.ADD, 0, randomStr(5))
+						}
+						else
+						{
+						workload[i] = new WorkItem(WorkItem.REM, 0, null)
+						}
+					
+					modifyAdd = !modifyAdd
+					
+					actualModify ++
+					}
+				
+				acc += fpart
+				
+				if (acc >= 1.0)
+					{
+					acc = acc - math.floor(acc)
+					
+					i ++
+					
+					if (i >= operationCount)
+						return
+					
+					//do another modify
+					if (modifyAdd)
+						{
+						workload[i] = new WorkItem(WorkItem.ADD, 0, randomStr(5))
+						}
+						else
+						{
+						workload[i] = new WorkItem(WorkItem.REM, 0, null)
+						}
+					
+					modifyAdd = !modifyAdd
+					
+					actualModify ++
+					}
+				}
+			
+			//out.println("ACCESS: $(actualAccess), MODIFY: $(actualModify) || ratio $accessPercent:$modifyPercent")
+			}
+		}
+	
+	void Driver:start()
+		{
+		for (int i = 0; i < workload.arrayLength; i++)
+			{
+			if (workload[i] == null) out.println("work null at $i")
+			
+			if (workload[i].type == WorkItem.ADD)
+				{
+				list.add(new String(workload[i].field))
+				}
+				else if (workload[i].type == WorkItem.REM)
+				{
+				list.remove(list.getFirst())
+				}
+				else if (workload[i].type == WorkItem.GET)
+				{
+				list.getIndex(workload[i].index)
+				}
+			}
+		}
+		
+	
+	}

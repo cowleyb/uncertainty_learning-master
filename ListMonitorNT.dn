@@ -1,0 +1,123 @@
+//version of the monitor probe with no function-call-timing (just env classification), to simulate pre-trained learning
+component provides data.adt.List(InterceptEvents), Monitor requires data.adt.List, time.Calendar cal, io.Output out {
+	
+	static int accessCount
+	static int modifyCount
+	
+	static int costTotal
+	static int costCount
+	
+	implementation Monitor {
+		
+		int Monitor:getEnvironment()
+			{
+			int class = 0
+			
+			dec ac = accessCount
+			dec mc = modifyCount
+			
+			dec qc = (ac / (ac + mc)) * 100.0
+			
+			if (qc > 70.0)
+				class = 0
+				else
+				class = 1
+			
+			accessCount = 0
+			modifyCount = 0
+			
+			return class
+			}
+		
+		dec Monitor:getReward()
+			{
+			return 0.0
+			}
+		
+		}
+	
+	implementation List {
+		
+		List proxy
+		
+		void InterceptEvents:setTarget(Object o)
+			{
+			proxy = o
+			}
+		
+		void List:add(Data item)
+			{
+			modifyCount ++
+			
+			proxy.add(item)
+			}
+		
+		void List:remove(Data item)
+			{
+			modifyCount ++
+			
+			proxy.remove(item)
+			}
+		
+		void List:update(Data item, Data newVersion)
+			{
+			accessCount ++
+			
+			proxy.update(item, newVersion)
+			}
+		
+		Data List:getFirst()
+			{
+			accessCount ++
+			
+			return proxy.getFirst()
+			}
+		
+		Data List:getNext()
+			{
+			accessCount ++
+			
+			return proxy.getNext()
+			}
+		
+		bool List:isEnd()
+			{
+			accessCount ++
+			
+			return proxy.isEnd()
+			}
+		
+		Data List:getIndex(int ndx)
+			{
+			accessCount ++
+			
+			return proxy.getIndex(ndx)
+			}
+		
+		void List:setIndex(int ndx, Data d)
+			{
+			accessCount ++
+			
+			proxy.setIndex(ndx, d)
+			}
+		
+		int List:getLength()
+			{
+			accessCount ++
+			
+			return proxy.getLength()
+			}
+		
+		Data[] List:getContents(opt Type type)
+			{
+			return proxy.getContents(type)
+			}
+		
+		bool List:clone(Object o)
+			{
+			return true
+			}
+		
+		}
+	
+	}

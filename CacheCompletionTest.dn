@@ -1,0 +1,192 @@
+const int WORKLOAD_TIMING_INTERVAL = 1000
+
+uses Driver
+
+data TestSpec {
+	int fileCount
+	int fileSize
+	int sizeVariance
+	}
+
+component provides App requires io.Output out, io.FileSystem fileSystem, Loader loader, composition.RecursiveLoader rLoader, composition.Search csearch, data.IntUtil iu, data.DecUtil du, data.StringUtil stringUtil, io.File, time.Timer timer, util.ParamParser {
+	
+	int STORED_ITEM_COUNT = 1000
+	
+	int WORKLOAD_CHUNK = 1000
+	int CHUNK_COUNT = 500
+	
+	char dependencySelect[] = null
+	
+	TestSpec workloads[]
+	
+	int wkProgress = 0
+	
+	bool intIn(int q, int in[])
+		{
+		for (int i = 0; i < in.arrayLength; i++)
+			{
+			if (in[i] == q) return true
+			}
+		
+		return false
+		}
+	
+	void loadDepends(IDC forCom, int except[])
+		{
+		InterfaceSpec depends[] = forCom.getRequires()
+		
+		for (int i = 0; i < depends.arrayLength; i++)
+			{
+			if (!intIn(i, except))
+				{
+				char fullPackage[] = depends[i].package
+				if (depends[i].variant != null) fullPackage = new char[](fullPackage, ":", depends[i].variant)
+				
+				String options[] = csearch.getComponents(fullPackage)
+				
+				if (options.arrayLength > 0)
+					{
+					String dependency = options[0]
+					
+					IDC newCom = rLoader.load(dependency.string).mainComponent
+					
+					forCom.wire(depends[i].alias, newCom, depends[i].alias)
+					}
+				}
+			}
+		}
+	
+	void timeWorkload(File fd)
+		{
+		int totalTime = 0
+		while (wkProgress < CHUNK_COUNT)
+			{
+			fd.write("$totalTime, $CHUNK_COUNT, $wkProgress\r\n")
+			timer.sleep(WORKLOAD_TIMING_INTERVAL)
+			totalTime += WORKLOAD_TIMING_INTERVAL
+			}
+		
+		fd.write("$totalTime, $CHUNK_COUNT, $wkProgress\r\n")
+		}
+	
+	void test(IDC driverCom, File fd)
+		{
+		int randomSeed = 0
+		
+		Driver main = new Driver(0, 0, 0) from driverCom
+		
+		Thread thread = asynch::timeWorkload(fd)
+		
+		for (wkProgress = 0; wkProgress < CHUNK_COUNT; wkProgress++)
+			{
+			int wkIndex = wkProgress % workloads.arrayLength
+			main.prep(randomSeed, workloads[wkIndex].fileCount, workloads[wkIndex].fileSize, workloads[wkIndex].sizeVariance, WORKLOAD_CHUNK)
+			main.start()
+			}
+		
+		out.println("[workload complete]")
+		
+		thread.join()
+		}
+	
+	IDC prepDriver()
+		{
+		IDC driverCom = loader.load("FileLoaderDriver.o")
+		
+		//the first dependency is the one we'll be adapting; any others we just load once
+		InterfaceSpec depends[] = driverCom.getRequires()
+		
+		char fullPackage[] = depends[0].package
+		if (depends[0].variant != null) fullPackage = new char[](fullPackage, ":", depends[0].variant)
+		
+		String options[] = csearch.getComponents(fullPackage)
+		
+		if (dependencySelect != null)
+			{
+			char a[] = dependencySelect.explode("\\/").implode("/")
+			
+			for (int i = 0; i < options.arrayLength; i ++)
+				{
+				char b[] = options[i].string.explode("\\/").implode("/")
+				
+				if (a == b)
+					dependencySelect = options[i].string
+				}
+			
+			if (dependencySelect == null) return null
+			}
+			else
+			{
+			dependencySelect = options[0].string
+			}
+		
+		String parts[] = stringUtil.explode(dependencySelect, "./")
+		char name[] = parts[parts.arrayLength-2].string
+		
+		IDC dependCom = rLoader.load(dependencySelect).mainComponent
+		
+		driverCom.wire(depends[0].alias, dependCom, depends[0].alias)
+		
+		loadDepends(driverCom, 0)
+		
+		return driverCom
+		}
+	
+	int App:main(AppParam params[])
+		{
+		ParamParser pparse = new ParamParser(params)
+		
+		if (pparse.getFreeValues() == null)
+			{
+			out.println("use CacheLearningTest workload_file")
+			return 1
+			}
+		
+		char workload[] = pparse.getFreeValues()[0].string
+		File ifd = new File(workload, File.READ)
+		String parts[] = ifd.read(ifd.getSize()).explode("\r\n")
+		
+		workloads = new TestSpec[parts.arrayLength]
+		
+		for (int i = 0; i < parts.arrayLength; i++)
+			{
+			String kparts[] = parts[i].string.explode(" ")
+			workloads[i] = new TestSpec(iu.intFromString(kparts[0].string), iu.intFromString(kparts[1].string), iu.intFromString(kparts[2].string))
+			}
+		
+		if (pparse.getValue("-c") != null)
+			WORKLOAD_CHUNK = iu.intFromString(pparse.getValue("-c"))
+		
+		if (pparse.getValue("-t") != null)
+			CHUNK_COUNT = iu.intFromString(pparse.getValue("-t"))
+		
+		if (pparse.getValue("-s") != null)
+			STORED_ITEM_COUNT = iu.intFromString(pparse.getValue("-s"))
+		
+		if (pparse.getValue("-d") != null)
+			dependencySelect = pparse.getValue("-d")
+		
+		IDC driverCom = prepDriver()
+		
+		char workloadName[] = workload.explode("/\\.")[1].string
+		
+		String dparts[] = dependencySelect.explode("\\/.")
+		char dependencyName[] = dparts[dparts.arrayLength-2].string
+		
+		//TODO: put the component name used for the dependency in the output file name
+		// - also support a command-line flag -d XXX to indicate which implementation to use for the dependency
+		
+		File fd = new File("output_data/cache_static_completion_stats_$(dependencyName)_$(workloadName)_$(CHUNK_COUNT)_$(WORKLOAD_CHUNK)_$(STORED_ITEM_COUNT).txt", File.CREATE)
+		
+		fd.write("time_ms, wk_total, wk_progress\r\n")
+		
+		test(driverCom, fd)
+		
+		//test(fd, 1)
+		
+		fd.close()
+		
+		return 0
+		}
+	
+	}

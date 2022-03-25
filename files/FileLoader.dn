@@ -1,0 +1,17 @@
+component provides FileLoader requires io.File {
+	
+	FileLoader:FileLoader()
+		{
+		
+		}
+	
+	byte[] FileLoader:loadFile(char path[])
+		{
+		File fd = new File(path, File.READ)
+		byte result[] = fd.read(fd.getSize())
+		fd.close()
+		
+		return result
+		}
+	
+	}

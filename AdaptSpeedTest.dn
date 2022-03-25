@@ -1,0 +1,263 @@
+//NOTE: we could measure the elements of adaptation more precisely by copying Adapter code into there and timing its elements
+// (this will provide far more precise measurement of what's really going on)
+
+//NOTE: two other things we can do in the "drivers" population:
+// -- increase the number of objects
+// -- increase the total amount of state (to 100, 1000, 10000, etc.)
+// -- increase the number of threads
+// -- insert pauses in calls to better emulate realistic call behaviour which tends to be mixed with local compute
+
+//const int REPEATS = 150
+
+//OSDI config:
+/*
+const int REPEATS = 50
+const int STORED_ITEM_COUNT = 1000
+const int SCALE_INC_AMOUNT = 500
+const int SCALE_TOP = 5000
+*/
+
+const int REPEATS = 2
+const int STORED_ITEM_COUNT = 100
+const int SCALE_INC_AMOUNT = 100
+const int SCALE_TOP = 1500
+
+uses AdaptEvents
+uses AdaptDriver
+
+component provides App requires io.Output out, io.FileSystem fileSystem, data.StringUtil stringUtil, Loader loader, composition.RecursiveLoader rLoader, composition.Search csearch, composition.Adapter adapter, time.Calendar cal, time.DateUtil dateUtil, data.IntUtil iu, data.DecUtil du, io.File {
+	
+	int threadCounts[] = new int[](0, 1)
+	
+	// --
+	// -- code from composition.Adapter, copied here so that we can insert timing code --
+	// --
+	
+	int totalPauseTime
+	
+	void adaptStatefulObject(IDC ofComponent, Object object, IDC source, char type[])
+		{
+		AdaptEvents ae
+		
+		int start = cal.getMS()
+		
+		if (dana.pauseObject(ofComponent, object))
+			{
+			// - initialise a new object, without calling its constructor
+			Object a = source.initObject(type)
+			// - wait for all in-progress calls to finish in the old object
+			dana.waitForObject(object)
+			// - notify the object that it's now the "inactive" copy
+			ofComponent.callInterface(object, "AdaptEvents", typeof(AdaptEvents), AdaptEvents.[inactive()], null)
+			// - get the object's state
+			Data transferState = ofComponent.getTransferState(object)
+			// - rewire live object so calls now go to the new one (a becomes null)
+			Object b = dana.rewireObject(object, a)
+			// - set the object's state
+			source.setTransferState(object, transferState)
+			// - notify the object that it's now the "active" copy
+			source.callInterface(object, "AdaptEvents", typeof(AdaptEvents), AdaptEvents.[active()], null)
+			
+			// - allow new calls to proceed in the new object
+			dana.resumeObject(object)
+			
+			int end = cal.getMS()
+			
+			totalPauseTime += (end - start)
+			
+			// - wait for any in-progress asynchronous threads to finish
+			dana.waitForObjectThreads(b)
+			}
+		}
+	
+	void adaptStatelessObject(IDC ofComponent, Object object, IDC source, char type[])
+		{
+		AdaptEvents ae
+		
+		DateTime pauseStart = cal.getTime()
+		
+		if (dana.pauseObject(ofComponent, object))
+			{
+			// - initialise a new object, without calling its constructor
+			Object a = source.initObject(type)
+			// - notify the object that it's now the "inactive" copy
+			ofComponent.callInterface(object, "AdaptEvents", typeof(AdaptEvents), AdaptEvents.[inactive()], null)
+			// - rewire live object so calls now go to the new one (a becomes null)
+			Object b = dana.rewireObject(object, a)
+			// - notify the object that it's now the "active" copy
+			source.callInterface(object, "AdaptEvents", typeof(AdaptEvents), AdaptEvents.[active()], null)
+			// - allow new calls to proceed in the new object
+			
+			dana.resumeObject(object)
+			
+			DateTime pauseEnd = cal.getTime()
+			
+			totalPauseTime += pauseEnd.diff(pauseStart).toMilliseconds()
+			
+			// - wait for all in-progress calls to finish in the old object
+			dana.waitForObject(b)
+			// - wait for any in-progress asynchronous threads to finish
+			dana.waitForObjectThreads(b)
+			}
+		}
+	
+	bool adaptObject(IDC ofComponent, Object object, IDC newImplementation, char typeName[])
+		{
+		if (ofComponent.hasTransferState(object))
+			adaptStatefulObject(ofComponent, object, newImplementation, typeName)
+			else
+			adaptStatelessObject(ofComponent, object, newImplementation, typeName)
+		
+		return true
+		}
+	
+	bool adaptRequiredInterface(IDC ofComponent, char interfaceName[], IDC toComponent)
+		{
+		if (ofComponent.hasRequires(interfaceName))
+			{
+			IDC oldTarget = ofComponent.getComponent(interfaceName)
+			
+			//temporarily prevent new object instances being created or destroyed, and snapshot the current set of objects
+			ofComponent.pause(interfaceName)
+			//switch the binding from this role to the new component (all new objects will be sourced from the new component)
+			ofComponent.wire(interfaceName, toComponent, interfaceName)
+			Object objects[] = ofComponent.getObjects(interfaceName)
+			ofComponent.resume(interfaceName)
+			
+			//switch all existing objects to the new class
+			for (int i = 0; i < objects.arrayLength; i++)
+				{
+				adaptObject(oldTarget, objects[i], toComponent, interfaceName)
+				}
+			}
+			else
+			{
+			throw new Exception("No bindport of type '$interfaceName' found on component")
+			}
+		
+		return true
+		}
+	
+	// --
+	// -- / code from composition.Adapter, copied here so that we can insert timing code / --
+	// --
+	
+	void runTest(char comp[], File fdLog)
+		{
+		out.println("run test on $comp")
+		
+		IDC driverCom = loader.load(comp)
+		
+		//the first dependency is the one we'll be adapting; any others we just load once
+		InterfaceSpec depends[] = driverCom.getRequires()
+		
+		for (int i = 1; i < depends.arrayLength; i++)
+			{
+			char fullPackage[] = depends[i].package
+			if (depends[i].variant != null) fullPackage = new char[](fullPackage, ":", depends[i].variant)
+			
+			String dependency = csearch.getComponents(fullPackage)[0]
+			
+			IDC dependCom = rLoader.load(dependency.string).mainComponent
+			
+			driverCom.wire(depends[i].alias, dependCom, depends[i].alias)
+			}
+		
+		//get first dependency, rload it
+		InterfaceSpec is = depends[0]
+		
+		char fullPackage[] = is.package
+		if (is.variant != null) fullPackage = new char[](fullPackage, ":", is.variant)
+		
+		String options[] = csearch.getComponents(fullPackage)
+		String dependency = options[options.arrayLength-1] //aim for the stdlib implementation, if any, which will be last
+		
+		IDC dependCom = rLoader.load(dependency.string).mainComponent
+		
+		driverCom.wire(is.alias, dependCom, is.alias)
+		
+		AdaptDriver main = new AdaptDriver() from driverCom
+		
+		if (main.doesScale())
+			{
+			for (int storedItems = STORED_ITEM_COUNT; storedItems <= SCALE_TOP; storedItems += SCALE_INC_AMOUNT)
+				{
+				for (int tci = 0; tci < threadCounts.arrayLength; tci++)
+					{
+					main.start(threadCounts[tci], storedItems)
+					
+					int loadTimes[] = new int[REPEATS]
+					int adaptTimes[] = new int[REPEATS]
+					int pauseTimes[] = new int[REPEATS]
+					
+					for (int i = 0; i < REPEATS; i++)
+						{
+						IDC newDependCom = null
+						
+						//load new component
+						
+						DateTime loadStart = cal.getTime()
+						
+						newDependCom = rLoader.load(dependency.string).mainComponent
+						
+						DateTime loadEnd = cal.getTime()
+						
+						//adapt to new component
+						
+						totalPauseTime = 0
+						
+						DateTime adaptStart = cal.getTime()
+						
+						adaptRequiredInterface(driverCom, is.alias, newDependCom)
+						
+						DateTime adaptEnd = cal.getTime()
+						
+						//write results to file
+						
+						loadTimes[i] = loadEnd.diff(loadStart).toMilliseconds()
+						adaptTimes[i] = adaptEnd.diff(adaptStart).toMilliseconds()
+						pauseTimes[i] = totalPauseTime
+						}
+					
+					char adaptTotal[] = null
+					for (int i = 0; i < adaptTimes.arrayLength; i++)
+						{
+						adaptTotal = new char[](adaptTotal, "-$(adaptTimes[i])")
+						}
+					
+					char adaptPauseTotal[] = null
+					for (int i = 0; i < pauseTimes.arrayLength; i++)
+						{
+						adaptPauseTotal = new char[](adaptPauseTotal, "-$(pauseTimes[i])")
+						}
+					
+					fdLog.write("$comp, $adaptTotal, $adaptPauseTotal, $storedItems, $(threadCounts[tci])\r\n")
+					
+					main.stop()
+					}
+				}
+			}
+		}
+	
+	int App:main(AppParam params[])
+		{
+		File fd = new File("output_data/adapt_speed_stats.txt", File.CREATE)
+		
+		fd.write("com, adapt_total, adapt_pause, stored_count, thread_count\r\n")
+		
+		FileEntry files[] = fileSystem.getDirectoryContents("drivers")
+		
+		for (int i = 0; i < files.arrayLength; i++)
+			{
+			if (files[i].name.find(".o") != StringUtil.NOT_FOUND)
+				{
+				runTest("drivers/$(files[i].name)", fd)
+				}
+			}
+		
+		fd.close()
+		
+		return 0
+		}
+	
+	}

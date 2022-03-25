@@ -1,0 +1,109 @@
+component provides Driver requires files.FileLoader, io.File, util.Random random, data.IntUtil iu, data.StringUtil su {
+	
+	int workloadCount = 0
+	int workloadFileCount = 0
+	
+	FileLoader loader
+	
+	void generateFile(char path[], int size)
+		{
+		File fd = new File(path, File.CREATE)
+		
+		for (int i = 0; i < size; i++)
+			{
+			byte val = random.getInt(256)
+			fd.write(val)
+			}
+		
+		fd.close()
+		}
+	
+	void createFiles(char path[], int count, int size, int variance, bool remake)
+		{
+		//generate the list of file sizes, accounting for variance (by randomly sampling from variance and randomly +/- it to file size)
+		
+		//generate the set of files of these sizes, just using monotonic names file0.txt, file1.txt, ...
+		
+		for (int i = 0; i < count; i++)
+			{
+			int varianceSample = random.getInt(variance)
+			int actualSize = size
+			
+			if (random.getInt(2) == 1)
+				actualSize -= varianceSample
+				else
+				actualSize += varianceSample
+			
+			File fd = new File("$path/file$(i).txt", File.READ)
+			if (fd == null || remake)
+				{
+				generateFile("$path/file$(i).txt", actualSize)
+				}
+			}
+		}
+	
+	bool newPattern(int fileCount, int avgSize, int variance)
+		{
+		File fd = new File("tmp/pattern.txt", File.READ)
+		
+		if (fd == null)
+			{
+			fd = new File("tmp/pattern.txt", File.CREATE)
+			
+			fd.write("$(avgSize)/$(variance)")
+			
+			return true
+			}
+		
+		char content[] = fd.read(fd.getSize())
+		
+		String parts[] = su.explode(content, "/")
+		
+		if (iu.intFromString(parts[0].string) != avgSize || iu.intFromString(parts[1].string) != variance)
+			{
+			fd = new File("tmp/pattern.txt", File.CREATE)
+			
+			fd.write("$(avgSize)/$(variance)")
+			
+			return true
+			}
+		
+		return false
+		}
+	
+	Driver:Driver(int fileCount, int avgSize, int variance)
+		{
+		//first, we create fileCount dummy files with random content, matching avgFileSize with fileSizeVariance
+		// - we also need to know how many dummy files to create
+		loader = new FileLoader()
+		}
+	
+	void Driver:prep(int seed, int fileCount, int avgSize, int variance, int operationCount)
+		{
+		//we save the file pattern in a file, to avoid re-generating the files every time...
+		
+		bool remake = newPattern(fileCount, avgSize, variance)
+		
+		//entropy is modelled just by the fileCount
+		createFiles("tmp", fileCount, avgSize, variance, remake)
+		
+		//set up the workload
+		workloadCount = operationCount
+		workloadFileCount = fileCount
+		random.setSeed(seed)
+		}
+	
+	void Driver:start()
+		{
+		//for each operation, we randomly select a file to load among fileCount
+		
+		char dir[] = "tmp"
+		
+		for (int i = 0; i < workloadCount; i++)
+			{
+			int ndx = random.getInt(workloadFileCount)
+			loader.loadFile("$dir/file$(ndx).txt")
+			}
+		}
+	
+	}

@@ -1,0 +1,57 @@
+data KV {
+	char key[]
+	char value[]
+	}
+
+component provides ParamParser requires data.query.Search search {
+	
+	KV keys[]
+	String freeValues[]
+	String switches[]
+	
+	bool isSwitch(char str[])
+		{
+		if (str.arrayLength > 1 && str[0] == "-")
+			return true
+		
+		return false
+		}
+	
+	ParamParser:ParamParser(AppParam params[])
+		{
+		for (int i = 0; i < params.arrayLength; i++)
+			{
+			if (isSwitch(params[i].string) && i + 1 < params.arrayLength)
+				{
+				KV nkv = new KV(params[i].string, params[i+1].string)
+				keys = new KV[](keys, nkv)
+				i ++
+				}
+				else
+				{
+				freeValues = new String[](freeValues, new String(params[i].string))
+				}
+			}
+		}
+	
+	char[] ParamParser:getValue(char key[])
+		{
+		KV val
+		
+		if ((val = keys.findFirst(KV.[key], new KV(key))) != null)
+			return val.value
+		
+		return null
+		}
+	
+	bool ParamParser:hasSwitch(char key[])
+		{
+		return switches.findFirst(String.[string], new String(key)) != null
+		}
+	
+	String[] ParamParser:getFreeValues()
+		{
+		return freeValues
+		}
+	
+	}

@@ -1,0 +1,205 @@
+//const int REPEATS = 70
+const int REPEATS = 100
+
+const int STORED_ITEM_COUNT = 1000
+
+const int OPERATION_COUNT = 1000
+
+const int FILE_SIZE = 500000
+const int FILE_SIZE_VAR = 400000
+
+uses Driver
+uses Monitor
+
+data TestSpec {
+	int fileCount
+	int fileSize
+	int sizeVariance
+	}
+
+component provides App requires io.Output out, io.FileSystem fileSystem, Loader loader, composition.RecursiveLoader rLoader, composition.Search csearch, time.Calendar cal, time.DateUtil dateUtil, data.IntUtil iu, data.DecUtil du, data.StringUtil stringUtil, io.File, ml.rl.RL learning, composition.Adapter adaptor, composition.Intercepter interceptor, time.Timer timer {
+	
+	TestSpec tests[] = new TestSpec[](
+									new TestSpec(10, FILE_SIZE, FILE_SIZE_VAR),
+									new TestSpec(25, FILE_SIZE, FILE_SIZE_VAR),
+									new TestSpec(50, FILE_SIZE, FILE_SIZE_VAR),
+									new TestSpec(75, FILE_SIZE, FILE_SIZE_VAR),
+									new TestSpec(100, FILE_SIZE, FILE_SIZE_VAR),
+									new TestSpec(125, FILE_SIZE, FILE_SIZE_VAR),
+									new TestSpec(150, FILE_SIZE, FILE_SIZE_VAR),
+									new TestSpec(175, FILE_SIZE, FILE_SIZE_VAR),
+									new TestSpec(200, FILE_SIZE, FILE_SIZE_VAR)
+									)
+	
+	IDC variants[]
+	
+	IDC loadMonitor()
+		{
+		return loader.load("FileLoaderMonitor.o")
+		}
+	
+	bool intIn(int q, int in[])
+		{
+		for (int i = 0; i < in.arrayLength; i++)
+			{
+			if (in[i] == q) return true
+			}
+		
+		return false
+		}
+	
+	void loadDepends(IDC forCom, int except[])
+		{
+		InterfaceSpec depends[] = forCom.getRequires()
+		
+		for (int i = 0; i < depends.arrayLength; i++)
+			{
+			if (!intIn(i, except))
+				{
+				char fullPackage[] = depends[i].package
+				if (depends[i].variant != null) fullPackage = new char[](fullPackage, ":", depends[i].variant)
+				
+				String options[] = csearch.getComponents(fullPackage)
+				
+				if (options.arrayLength > 0)
+					{
+					String dependency = options[0]
+					
+					IDC newCom = rLoader.load(dependency.string).mainComponent
+					
+					forCom.wire(depends[i].alias, newCom, depends[i].alias)
+					}
+				}
+			}
+		}
+	
+	void testPlain(File fd, int dIndex)
+		{
+		IDC driverCom = loader.load("FileLoaderDriver.o")
+		
+		loadDepends(driverCom, 0)
+		
+		InterfaceSpec depends[] = driverCom.getRequires()
+		
+		// - get the set of implementation variants for req. #0, and set them as our action list for learning
+		// - start a separate thread running a workload
+		// - begin a learning process for N iterations
+		// - (then somehow work in the classifier element...)
+		
+		char fullPackage[] = depends[0].package
+		if (depends[0].variant != null) fullPackage = new char[](fullPackage, ":", depends[0].variant)
+		
+		String options[] = csearch.getComponents(fullPackage)
+		
+		IDC res = rLoader.load(options[dIndex].string).mainComponent
+		
+		// - wire to the first one
+		driverCom.wire(depends[0].alias, res, depends[0].alias)
+		
+		// - prep the driver program
+		TestSpec ts = tests[0]
+		int randomSeed = 0
+		Driver driverMain = new Driver(ts.fileCount, ts.fileSize, ts.sizeVariance) from driverCom
+		
+		// - run timing experiment
+		
+		driverMain.prep(0, ts.fileCount, ts.fileSize, ts.sizeVariance, OPERATION_COUNT)
+		
+		DateTime start = cal.getTime()
+		
+		driverMain.start()
+		
+		DateTime end = cal.getTime()
+		
+		fd.write("$(dateUtil.diff(start, end).toMilliseconds()),")
+		}
+	
+	void testMonitoring(File fd, int dIndex)
+		{
+		IDC driverCom = loader.load("FileLoaderDriver.o")
+		
+		loadDepends(driverCom, 0)
+		
+		IDC monitorCom = loadMonitor()
+		
+		loadDepends(monitorCom, 0)
+		
+		Monitor monitor = new Monitor() from monitorCom
+		
+		InterfaceSpec depends[] = driverCom.getRequires()
+		
+		// - get the set of implementation variants for req. #0, and set them as our action list for learning
+		// - start a separate thread running a workload
+		// - begin a learning process for N iterations
+		// - (then somehow work in the classifier element...)
+		
+		char fullPackage[] = depends[0].package
+		if (depends[0].variant != null) fullPackage = new char[](fullPackage, ":", depends[0].variant)
+		
+		String options[] = csearch.getComponents(fullPackage)
+		
+		IDC res = rLoader.load(options[dIndex].string).mainComponent
+		
+		// - wire to the first one
+		driverCom.wire(depends[0].alias, res, depends[0].alias)
+		monitorCom.wire(depends[0].alias, res, depends[0].alias)
+		
+		// - prep the driver program
+		TestSpec ts = tests[0]
+		int randomSeed = 0
+		Driver driverMain = new Driver(ts.fileCount, ts.fileSize, ts.sizeVariance) from driverCom
+		
+		// - inject a monitoring probe
+		
+		interceptor.insertInterceptor(driverCom, depends[0].alias, monitorCom, depends[0].alias, depends[0].alias)
+		
+		// - run timing experiment
+		
+		driverMain.prep(0, ts.fileCount, ts.fileSize, ts.sizeVariance, OPERATION_COUNT)
+		
+		DateTime start = cal.getTime()
+		
+		driverMain.start()
+		
+		DateTime end = cal.getTime()
+		
+		fd.write("$(dateUtil.diff(start, end).toMilliseconds())\r\n")
+		}
+	
+	String[] getDependsOptions(char com[])
+		{
+		IDC driverCom = loader.load(com)
+		
+		InterfaceSpec depends[] = driverCom.getRequires()
+		
+		char fullPackage[] = depends[0].package
+		if (depends[0].variant != null) fullPackage = new char[](fullPackage, ":", depends[0].variant)
+		
+		String options[] = csearch.getComponents(fullPackage)
+		
+		return options
+		}
+	
+	int App:main(AppParam params[])
+		{
+		File fd = new File("output_data/cache_monitoring_stats.txt", File.CREATE)
+		
+		fd.write("com, op_count, plain, monitor\r\n")
+		
+		String options[] = getDependsOptions("FileLoaderDriver.o")
+		
+		for (int i = 0; i < options.arrayLength; i++)
+			{
+			fd.write("$(options[i].string), $OPERATION_COUNT, ")
+			
+			testPlain(fd, i)
+			
+			testMonitoring(fd, i)
+			}
+		
+		fd.close()
+		
+		return 0
+		}
+	
+	}

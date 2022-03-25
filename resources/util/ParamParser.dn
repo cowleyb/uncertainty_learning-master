@@ -1,0 +1,14 @@
+uses App
+uses data.String
+
+interface ParamParser {
+	
+	ParamParser(AppParam params[])
+	
+	char[] getValue(char paramKey[])
+	
+	bool hasSwitch(char key[])
+	
+	String[] getFreeValues()
+	
+	}

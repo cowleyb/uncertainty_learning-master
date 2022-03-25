@@ -1,0 +1,4 @@
+data KeyVal {
+	char key[]
+	char value[]
+	}

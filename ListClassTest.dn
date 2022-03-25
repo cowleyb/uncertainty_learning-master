@@ -1,0 +1,246 @@
+const int LEARNING_WINDOW = 1000
+
+const int WORKLOAD_TIMING_INTERVAL = 1000
+
+const dec NORMALISATION_HIGH = 1.0
+const dec NORMALISATION_LOW = 0.0
+
+uses Driver
+uses Monitor
+
+component provides App requires io.Output out, Loader loader, composition.RecursiveLoader rLoader, composition.Search csearch, data.IntUtil iu, data.DecUtil du, data.StringUtil stringUtil, io.File, composition.Adapter adaptor, composition.Intercepter interceptor, time.Timer timer,time.Calendar calender, util.ParamParser {
+	
+	IDC variants[]
+	
+	int STORED_ITEM_COUNT = 1000
+	
+	int WORKLOAD_CHUNK = 1000
+	int CHUNK_COUNT = 500
+	int LEARNING_ITERATIONS = 1000
+	
+	int workloads[] = new int[](10)
+	
+	int wkProgress = 0
+	
+	IDC loadMonitor()
+		{
+		return loader.load("ListMonitor.o")
+		}
+	
+	dec normalise(dec reward)
+		{
+		if (reward > NORMALISATION_HIGH) reward = NORMALISATION_HIGH
+		if (reward < NORMALISATION_LOW) reward = NORMALISATION_LOW
+		
+		reward = reward / NORMALISATION_HIGH
+		
+		return 1.0 - reward
+		}
+	
+	void runWorkload(Driver main)
+		{
+		int randomSeed = calender.getMS()	
+		
+		for (wkProgress = 0; wkProgress < CHUNK_COUNT; wkProgress++)
+			{
+			int wkIndex = wkProgress % workloads.arrayLength
+			main.prep(randomSeed, workloads[wkIndex], 100 - workloads[wkIndex], WORKLOAD_CHUNK, 0)
+			main.start()
+			}
+		
+		out.println("[workload complete]")
+		}
+	
+	bool intIn(int q, int in[])
+		{
+		for (int i = 0; i < in.arrayLength; i++)
+			{
+			if (in[i] == q) return true
+			}
+		
+		return false
+		}
+	
+	void loadDepends(IDC forCom, int except[])
+		{
+		InterfaceSpec depends[] = forCom.getRequires()
+		
+		for (int i = 0; i < depends.arrayLength; i++)
+			{
+			if (!intIn(i, except))
+				{
+				char fullPackage[] = depends[i].package
+				if (depends[i].variant != null) fullPackage = new char[](fullPackage, ":", depends[i].variant)
+				
+				String options[] = csearch.getComponents(fullPackage)
+				
+				if (options.arrayLength > 0)
+					{
+					String dependency = options[0]
+					
+					IDC newCom = rLoader.load(dependency.string).mainComponent
+					
+					forCom.wire(depends[i].alias, newCom, depends[i].alias)
+					}
+				}
+			}
+		}
+	
+	void test(char compTest[], File fd)
+		{
+		compTest = compTest.explode("\\").implode("/")
+		
+		IDC driverCom = loader.load("ListDriver.o")
+		
+		loadDepends(driverCom, 0)
+		
+		IDC monitorCom = loadMonitor()
+		
+		loadDepends(monitorCom, 0)
+		
+		Monitor monitor = new Monitor() from monitorCom
+		
+		InterfaceSpec depends[] = driverCom.getRequires()
+		
+		// - get the set of implementation variants for req. #0, and set them as our action list for learning
+		// - start a separate thread running a workload
+		// - begin a learning process for N iterations
+		// - (then somehow work in the classifier element...)
+		
+		char fullPackage[] = depends[0].package
+		if (depends[0].variant != null) fullPackage = new char[](fullPackage, ":", depends[0].variant)
+		
+		String options[] = csearch.getComponents(fullPackage)
+		String actions[] = new String[options.arrayLength-1]
+		
+		int choice = 0
+		bool choiceMade = false
+		variants = new IDC[options.arrayLength-1]
+		
+		out.println("Action list:")
+		
+		for (int i = 0; i < options.arrayLength-1; i++)
+			{
+			out.print(" - $(options[i].string)")
+			
+			if (stringUtil.ifind(options[i].string, compTest) != StringUtil.NOT_FOUND)
+				{
+				choice = i
+				out.println(" [selected]")
+				choiceMade = true
+				}
+				else
+				{
+				out.println("")
+				}
+			
+			variants[i] = rLoader.load(options[i].string).mainComponent
+			actions[i] = options[i]
+			}
+		
+		if (!choiceMade)
+			{
+			out.println("[warning: no option matching '$compTest' found, using default '$(options[i].string)']")
+			}
+		
+		// - wire to the chosen one
+		driverCom.wire(depends[0].alias, variants[choice], depends[0].alias)
+		monitorCom.wire(depends[0].alias, variants[choice], depends[0].alias)
+		
+		// - prep the driver program
+		Driver driverMain = new Driver(STORED_ITEM_COUNT, 0, 0) from driverCom
+		
+		// - inject a monitoring probe
+		
+		interceptor.insertInterceptor(driverCom, depends[0].alias, monitorCom, depends[0].alias, depends[0].alias)
+		
+		// - start a separate thread running a workload
+		asynch::runWorkload(driverMain)
+		
+		// - begin a observation process for N iterations
+		
+		int learningTime = 0
+		
+		int curEnv = 0
+		
+		while (true)
+			{
+			if (wkProgress == CHUNK_COUNT)
+				{
+				out.println("observation iterations stopped as workload ended")
+				break
+				}
+			
+			timer.sleep(LEARNING_WINDOW)
+			
+			learningTime += LEARNING_WINDOW
+			
+			curEnv = monitor.getEnvironment()
+						
+			dec reward_raw = monitor.getReward()
+			dec reward = normalise(reward_raw)
+			
+			fd.write("$learningTime, $reward_raw, $reward, $curEnv\r\n")
+			fd.flush()
+
+			}
+		}
+	
+	//the workfile file lists a set of discrete workload types which will be executed in order (and in a loop)
+	// - the param -c XXX provides how many operations to run for each workload type
+	// - the param -t XXX provides the number of workload chunks to execute
+	// - so if -c 50 and -t 100 we will execute 100 workload chunks, each of which has 50 operations
+
+	int App:main(AppParam params[])
+		{
+		ParamParser pparse = new ParamParser(params)
+		
+
+
+		if (pparse.getFreeValues() == null)
+			{
+			out.println("use ListClassTest component.o workload_file")
+			return 1
+			}
+		
+		char compTest[] = pparse.getFreeValues()[0].string
+		char workload[] = pparse.getFreeValues()[1].string
+		File ifd = new File(workload, File.READ)
+		String parts[] = ifd.read(ifd.getSize()).explode("\r\n")
+		
+		workloads = new int[parts.arrayLength]
+		
+		for (int i = 0; i < parts.arrayLength; i++)
+			workloads[i] = iu.intFromString(parts[i].string)
+		
+		if (pparse.getValue("-c") != null)
+			WORKLOAD_CHUNK = iu.intFromString(pparse.getValue("-c"))
+		
+		if (pparse.getValue("-t") != null)
+			CHUNK_COUNT = iu.intFromString(pparse.getValue("-t"))
+		
+		if (pparse.getValue("-i") != null)
+			LEARNING_ITERATIONS = iu.intFromString(pparse.getValue("-i"))
+		
+		if (pparse.getValue("-s") != null)
+			STORED_ITEM_COUNT = iu.intFromString(pparse.getValue("-s"))
+		
+		char workloadName[] = workload.explode("/\\.")[1].string
+			
+		//File a = new File("output_data/stuff.txt", File.CREATE)
+		//a.close()
+		
+		File fd = new File("output_data/list_class_stats_$(workloadName)_$(CHUNK_COUNT)_$(WORKLOAD_CHUNK)_$(STORED_ITEM_COUNT).txt", File.WRITE)
+		fd.setPos(fd.getSize())
+		//fd.write("time_ms, reward_raw_ms, reward_calc, env\r\n")
+		
+
+		test(compTest, fd)
+		
+		fd.close()
+
+		
+		return 0
+		}
+	
+	}

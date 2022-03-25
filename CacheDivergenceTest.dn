@@ -1,0 +1,115 @@
+//const int REPEATS = 70
+const int REPEATS = 50
+
+const int OPERATION_COUNT = 1000
+
+const int FILE_SIZE = 500000
+const int FILE_SIZE_VAR = 400000
+
+uses Driver
+
+data TestSpec {
+	int fileCount
+	int fileSize
+	int sizeVariance
+	}
+
+component provides App requires io.Output out, io.FileSystem fileSystem, Loader loader, composition.RecursiveLoader rLoader, composition.Search csearch, time.Calendar cal, time.DateUtil dateUtil, data.IntUtil iu, data.StringUtil stringUtil, io.File {
+	
+	TestSpec tests[] = new TestSpec[](
+									new TestSpec(10, FILE_SIZE, FILE_SIZE_VAR),
+									new TestSpec(25, FILE_SIZE, FILE_SIZE_VAR),
+									new TestSpec(50, FILE_SIZE, FILE_SIZE_VAR),
+									new TestSpec(75, FILE_SIZE, FILE_SIZE_VAR),
+									new TestSpec(100, FILE_SIZE, FILE_SIZE_VAR),
+									new TestSpec(125, FILE_SIZE, FILE_SIZE_VAR),
+									new TestSpec(150, FILE_SIZE, FILE_SIZE_VAR),
+									new TestSpec(175, FILE_SIZE, FILE_SIZE_VAR),
+									new TestSpec(200, FILE_SIZE, FILE_SIZE_VAR)
+									)
+	
+	void test(File fd, int pIndex)
+		{
+		IDC driverCom = loader.load("FileLoaderDriver.o")
+		
+		//the first dependency is the one we'll be adapting; any others we just load once
+		InterfaceSpec depends[] = driverCom.getRequires()
+		
+		char fullPackage[] = depends[0].package
+		if (depends[0].variant != null) fullPackage = new char[](fullPackage, ":", depends[0].variant)
+		
+		String options[] = csearch.getComponents(fullPackage)
+		
+		String dependency = options[pIndex]
+		String primaryDepend = dependency
+		
+		String parts[] = stringUtil.explode(dependency.string, "./")
+		char name[] = parts[parts.arrayLength-2].string
+		
+		IDC dependCom = rLoader.load(dependency.string).mainComponent
+		
+		driverCom.wire(depends[0].alias, dependCom, depends[0].alias)
+		
+		for (int i = 1; i < depends.arrayLength; i++)
+			{
+			fullPackage = depends[i].package
+			if (depends[i].variant != null) fullPackage = new char[](fullPackage, ":", depends[i].variant)
+			
+			options = csearch.getComponents(fullPackage)
+			
+			if (options.arrayLength > 0)
+				{
+				dependency = options[0]
+				
+				dependCom = rLoader.load(dependency.string).mainComponent
+				
+				driverCom.wire(depends[i].alias, dependCom, depends[i].alias)
+				}
+			}
+		
+		for (int i = 0; i < tests.arrayLength; i++)
+			{
+			Driver main = new Driver(tests[i].fileCount, tests[i].fileSize, tests[i].sizeVariance) from driverCom
+			
+			int opTimes[] = new int[REPEATS]
+			
+			for (int j = 0; j < REPEATS; j++)
+				{
+				main.prep(0, tests[i].fileCount, tests[i].fileSize, tests[i].sizeVariance, OPERATION_COUNT)
+				
+				DateTime opStart = cal.getTime()
+				
+				main.start()
+				
+				DateTime opEnd = cal.getTime()
+				
+				opTimes[j] = opEnd.diff(opStart).toMilliseconds()
+				}
+			
+			char times[] = null
+			
+			for (int j = 0; j < opTimes.arrayLength; j++)
+				{
+				times = new char[](times, "$(opTimes[j])-")
+				}
+			
+			fd.write("$(primaryDepend.string), $(tests[i].fileCount), $times\r\n")
+			}
+		}
+	
+	int App:main(AppParam params[])
+		{
+		File fd = new File("output_data/cache_diverge_stats_sz$(FILE_SIZE)_var$(FILE_SIZE_VAR).txt", File.CREATE)
+		
+		fd.write("com, ratio, avg_time_ms\r\n")
+		
+		test(fd, 0)
+		
+		test(fd, 1)
+		
+		fd.close()
+		
+		return 0
+		}
+	
+	}

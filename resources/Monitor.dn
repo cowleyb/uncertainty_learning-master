@@ -1,0 +1,7 @@
+interface Monitor {
+	
+	int getEnvironment()
+	
+	dec getReward()
+	
+	}

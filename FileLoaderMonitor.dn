@@ -1,0 +1,104 @@
+uses data.String
+
+component provides files.FileLoader(InterceptEvents), Monitor requires files.FileLoader, time.Calendar cal,io.Output out, data.DecUtil du, encoding.StringUTF {
+	
+	static String recent[] = new String[](new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(),
+											new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(),
+											new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(),
+											new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(),
+											new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(),
+											new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(),
+											new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(),
+											new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(),
+											new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(),
+											new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String(), new String())
+	static int last = 0
+	
+	static int costTotal
+	static int costCount
+	
+	implementation Monitor {
+		
+		int Monitor:getEnvironment()
+			{
+			//our classifier uses a history window, in which we check how many files are unique
+			
+			int ucount = 0
+			
+			for (int i = 0; i < recent.arrayLength; i++)
+				{
+				bool unique = true
+				
+				for (int j = 0; j < recent.arrayLength; j++)
+					{
+					if (j != i && recent[i].string == recent[j].string)
+						unique = false
+					}
+				
+				if (unique) ucount ++
+				}
+			
+			//get "unique" as a percentage of the history window size
+			int uper = (ucount * 100) / recent.arrayLength
+			
+			//now we can either return this percentage directly, or further classify it into e.g. < 50 = class A ...
+			out.println("")
+			if (ucount >= 20)
+				return 1	
+				else
+				return 0
+			}
+		
+		dec Monitor:getReward()
+			{
+			dec total = costTotal
+			dec res = total / costCount
+			costTotal = 0
+			costCount = 0
+		
+			return res
+			}
+		
+		}
+	
+	implementation FileLoader {
+		
+		FileLoader proxy
+		
+		void InterceptEvents:setTarget(Object o)
+			{
+			proxy = o
+			}
+		
+		FileLoader:FileLoader()
+			{
+			proxy = new FileLoader()
+			}
+		
+		byte[] FileLoader:loadFile(char path[])
+			{
+			//classifier
+			recent[last].string = path
+
+			out.print(path)
+			out.print(",")
+
+			last ++
+			if (last >= recent.arrayLength) last = 0
+			
+			//reward
+			int start = cal.getMS()
+			
+			byte res[] = proxy.loadFile(path)
+			
+			int end = cal.getMS()
+			
+			int diff = end - start
+			costTotal += diff
+			costCount ++
+			return res
+			}
+		
+		}
+	
+	}
